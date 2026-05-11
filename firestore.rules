@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(email) {
+      return isSignedIn() && 
+             request.auth.token.email == email && 
+             request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isOwner('mehaalkhan.2@gmail.com');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Phase 4: Validation Blueprints
+    function isValidGalleryImage(data) {
+      return data.keys().hasAll(['url', 'alt', 'uploadedBy', 'createdAt']) &&
+             data.keys().size() == 4 &&
+             data.url is string && data.url.size() <= 1000 &&
+             data.alt is string && data.alt.size() <= 200 &&
+             data.uploadedBy == 'mehaalkhan.2@gmail.com' &&
+             data.createdAt is timestamp; // or request.time
+    }
+
+    function isValidBroadcast(data) {
+      return data.keys().hasAll(['title', 'body', 'sentAt', 'sender']) &&
+             data.keys().size() == 4 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.body is string && data.body.size() <= 5000 &&
+             data.sender == 'mehaalkhan.2@gmail.com';
+    }
+
+    function isValidPushToken(data) {
+      return data.keys().hasAll(['token', 'uid', 'updatedAt']) &&
+             data.keys().size() == 3 &&
+             data.token is string && data.token.size() <= 500 &&
+             data.uid is string && (data.uid == request.auth.uid || data.uid == 'anonymous');
+    }
+
+    // Collection matches
+    match /achievements_gallery/{imageId} {
+      allow read: if true; 
+      allow create: if isAdmin() && 
+                       isValidId(imageId) && 
+                       isValidGalleryImage(incoming());
+      allow update, delete: if false;
+    }
+
+    match /broadcasts/{broadcastId} {
+      allow read: if true; // Everyone can see broadcasts in MessageCenter
+      allow create: if isAdmin() && isValidBroadcast(incoming());
+      allow update, delete: if false;
+    }
+
+    match /push_tokens/{tokenId} {
+       // Only allow setting your own token
+       allow get: if isSignedIn() && (existing().uid == request.auth.uid || tokenId == request.auth.uid);
+       allow create, update: if isValidPushToken(incoming());
+       allow list, delete: if false;
+    }
+  }
+}
